@@ -12,6 +12,11 @@ datasource db {
   provider = "postgresql"
 }
 
+enum MembershipRole {
+  admin
+  member
+}
+
 model User {
   id        Int      @id @default(autoincrement())
   name      String
@@ -34,7 +39,7 @@ model Membership {
   id Int @id @default(autoincrement())
   userId Int
   workspaceId Int
-  role String
+  role MembershipRole
   user User @relation(fields: [userId], references: [id])
   workspace Workspace @relation(fields: [workspaceId], references: [id])
   @@unique([userId,workspaceId])

@@ -11,8 +11,8 @@ export const createUser = async (
   next: NextFunction,
 ) => {
   try {
-    const { name, email } = req.body;
-    const user = await prisma.user.create({ data: { name, email } });
+    const { name, email, password } = req.body;
+    const user = await prisma.user.create({ data: { name, email, password } });
     res.status(201).json(user);
   } catch (error) {
     next(error);

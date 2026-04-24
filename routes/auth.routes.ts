@@ -7,3 +7,5 @@ const router = Router();
 
 router.post("/signup", authLimit, signup);
 router.post("/login", authLimit, login);
+
+export default router;

@@ -13,6 +13,13 @@ export const signup = async (
 ) => {
   try {
     const { name, email, password } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Name, email, and password are required",
+      });
+    }
+
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
       return res.status(400).json({
@@ -24,10 +31,12 @@ export const signup = async (
     const user = await prisma.user.create({
       data: { name, email, password: hashedPassword },
     });
-    res.status(201).json({
+    const { password: _password, ...safeUser } = user;
+
+    return res.status(201).json({
       success: true,
       message: "User created successfully",
-      user,
+      user: safeUser,
     });
   } catch (error) {
     next(error);
