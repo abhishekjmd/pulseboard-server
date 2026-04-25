@@ -49,12 +49,63 @@ export const getWorkspaces = async (
     }
 
     const workspaces = await prisma.workspace.findMany({
-      where: { memberships: { some: { userId } } },
-      include: { _count: { select: { memberships: true } } },
+      include: {
+        memberships: {
+          include: { user: { select: { id: true, name: true, email: true } } },
+        },
+      },
     });
     res.status(200).json({
       success: true,
       data: workspaces,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getWorkspaceById = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        sucess: false,
+        message: "user not authenticated",
+      });
+    }
+
+    const workspaceId = Number(req.params.id);
+    const membership = await prisma.membership.findFirst({
+      where: { userId, workspaceId },
+    });
+    if (!membership) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: {
+        id: true,
+        name: true,
+        createdAt: true,
+        memberships: {
+          select: {
+            id: true,
+            role: true,
+            user: { select: { id: true, name: true, email: true } },
+          },
+        },
+      },
+    });
+    return res.status(200).json({
+      success: true,
+      data: workspace,
     });
   } catch (error) {
     next(error);
