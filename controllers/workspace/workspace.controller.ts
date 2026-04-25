@@ -27,7 +27,34 @@ export const createWorkspace = async (
     });
     res.status(201).json({
       success: true,
-      data: workspace
+      data: workspace,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getWorkspaces = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "user not authenticated",
+      });
+    }
+
+    const workspaces = await prisma.workspace.findMany({
+      where: { memberships: { some: { userId } } },
+      include: { _count: { select: { memberships: true } } },
+    });
+    res.status(200).json({
+      success: true,
+      data: workspaces,
     });
   } catch (error) {
     next(error);
