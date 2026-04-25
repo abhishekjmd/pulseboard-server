@@ -111,3 +111,54 @@ export const getWorkspaceById = async (
     next(error);
   }
 };
+
+export const inviteUser = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const userId = req.user?.id;
+    const workspaceId = Number(req.params.id);
+    const { email, role } = req.body;
+
+    const membership = await prisma.membership.findFirst({
+      where: { userId, workspaceId },
+    });
+    if (!membership || membership.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only admins can invite users",
+      });
+    }
+    const userToInvite = await prisma.user.findUnique({ where: { email } });
+    if (!userToInvite) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+    const existingMembership = await prisma.membership.findFirst({
+      where: { userId: userToInvite.id, workspaceId },
+    });
+    if (existingMembership) {
+      return res.status(400).json({
+        success: false,
+        message: "User is already a member of this workspace",
+      });
+    }
+    await prisma.membership.create({
+      data: {
+        userId: userToInvite.id,
+        workspaceId,
+        role: "Member",
+      },
+    });
+    res.status(200).json({
+      success: true,
+      message: "User invited successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
