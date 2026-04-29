@@ -162,3 +162,71 @@ export const inviteUser = async (
     next(error);
   }
 };
+
+export const getWorkspaceRepos = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    const workspaceId = Number(req.params.id);
+    if (Number.isNaN(workspaceId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid workspace id",
+      });
+    }
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true },
+    });
+
+    if (!workspace) {
+      return res.status(404).json({
+        success: false,
+        message: "Workspace not found",
+      });
+    }
+
+    const membership = await prisma.membership.findUnique({
+      where: {
+        userId_workspaceId: {
+          userId,
+          workspaceId,
+        },
+      },
+    });
+
+    if (!membership) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    const repos = await prisma.repository.findMany({
+      where: { workspaceId },
+      select: {
+        id: true,
+        name: true,
+        owner: true,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      repos,
+    });
+  } catch (error) {
+    next(error);
+  }
+};

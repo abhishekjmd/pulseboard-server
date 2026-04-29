@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { PrismaClient } from "../../generated/prisma";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { syncRepoCommitsById } from "../../services/repo.service";
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
@@ -162,10 +163,20 @@ export const getRepoCommits = async (req: Request, res: Response) => {
       });
     }
 
+    const requestedLimit = Number(req.query.limit);
+    const requestedPage = Number(req.query.page);
+    const limit =
+      Number.isInteger(requestedLimit) && requestedLimit > 0
+        ? Math.min(requestedLimit, 100)
+        : 20;
+    const page =
+      Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+
     const commits = await prisma.commit.findMany({
       where: { repositoryId: repo.id },
       orderBy: { date: "desc" },
-      take: 20,
+      take: limit,
+      skip: (page - 1) * limit,
       select: {
         message: true,
         authorName: true,
@@ -175,6 +186,8 @@ export const getRepoCommits = async (req: Request, res: Response) => {
 
     return res.status(200).json({
       success: true,
+      page,
+      limit,
       commits: commits.map((commit) => ({
         message: commit.message,
         author: commit.authorName,
@@ -222,59 +235,186 @@ export const syncCommits = async (req: Request, res: Response) => {
       });
     }
 
-    const githubResponse = await fetch(
-      `https://api.github.com/repos/${repo.owner}/${repo.name}/commits?per_page=50`,
-    );
-    if (!githubResponse.ok) {
-      return res.status(500).json({
-        success: false,
-        message: "Failed to fetch commits from GitHub",
-      });
-    }
-
-    const githubCommits = await githubResponse.json();
-    if (!Array.isArray(githubCommits)) {
-      return res.status(500).json({
-        success: false,
-        message: "Invalid commit payload from GitHub",
-      });
-    }
-
-    const mappedCommits = githubCommits
-      .map((commit) => {
-        const sha = commit?.sha;
-        const message = commit?.commit?.message;
-        const authorName = commit?.commit?.author?.name;
-        const authorEmail = commit?.commit?.author?.email;
-        const authorDate = commit?.commit?.author?.date;
-
-        if (!sha || !message || !authorName || !authorEmail || !authorDate) {
-          return null;
-        }
-
-        return {
-          sha,
-          message,
-          authorName,
-          authorEmail,
-          date: new Date(authorDate),
-          repositoryId: repo.id,
-        };
-      })
-      .filter((commit): commit is NonNullable<typeof commit> => commit !== null);
-
-    const result = await prisma.commit.createMany({
-      data: mappedCommits,
-      skipDuplicates: true,
-    });
+    const count = await syncRepoCommitsById(repo.id);
 
     return res.status(200).json({
       success: true,
       message: "Commits synced successfully",
-      count: result.count,
+      count,
     });
   } catch (error) {
     console.error("Error syncing repository commits:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+export const getRepoAnalytics = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    const repoId = Number(req.params.id);
+    if (Number.isNaN(repoId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid repository id",
+      });
+    }
+
+    const { repo, isAuthorized } = await getAuthorizedRepoForUser(userId, repoId);
+    if (!repo) {
+      return res.status(404).json({
+        success: false,
+        message: "Repository not found",
+      });
+    }
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    const requestedDays = Number(req.query.days);
+    const days = Number.isInteger(requestedDays) && requestedDays > 0 ? requestedDays : 30;
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    const analyticsWhere = {
+      repositoryId: repo.id,
+      date: { gte: since },
+    };
+
+    const totalCommits = await prisma.commit.count({
+      where: analyticsWhere,
+    });
+
+    const contributorGroups = await prisma.commit.groupBy({
+      by: ["authorName"],
+      where: analyticsWhere,
+      _count: {
+        authorName: true,
+      },
+      orderBy: {
+        _count: {
+          authorName: "desc",
+        },
+      },
+      take: 5,
+    });
+
+    const topContributors = contributorGroups.map((group) => ({
+      author: group.authorName,
+      commits: group._count.authorName,
+    }));
+
+    const commits = await prisma.commit.findMany({
+      where: analyticsWhere,
+      select: { date: true },
+    });
+
+    // Current approach groups in memory; for very large datasets we should move this to SQL aggregation.
+    const commitsPerDayMap = commits.reduce<Record<string, number>>((acc, commit) => {
+      const day = commit.date.toLocaleDateString("en-CA");
+      acc[day] = (acc[day] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    const commitsPerDay = Object.entries(commitsPerDayMap)
+      .map(([date, count]) => ({ date, commits: count }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        days,
+        totalCommits,
+        topContributors,
+        commitsPerDay,
+      },
+    });
+  } catch (error) {
+    console.error("Error getting repository analytics:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+export const getRepoContributors = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    const repoId = Number(req.params.id);
+    if (Number.isNaN(repoId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid repository id",
+      });
+    }
+
+    const { repo, isAuthorized } = await getAuthorizedRepoForUser(userId, repoId);
+    if (!repo) {
+      return res.status(404).json({
+        success: false,
+        message: "Repository not found",
+      });
+    }
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    const requestedLimit = Number(req.query.limit);
+    const limit =
+      Number.isInteger(requestedLimit) && requestedLimit > 0
+        ? Math.min(requestedLimit, 100)
+        : 5;
+    const sort = req.query.sort === "asc" ? "asc" : "desc";
+
+    const groups = await prisma.commit.groupBy({
+      by: ["authorName"],
+      where: { repositoryId: repo.id },
+      _count: { authorName: true },
+      _max: { date: true },
+      orderBy: {
+        _count: {
+          authorName: sort,
+        },
+      },
+      take: limit,
+    });
+
+    const contributors = groups.map((group) => ({
+      author: group.authorName,
+      commits: group._count.authorName,
+      lastActive: group._max.date ? group._max.date.toLocaleDateString("en-CA") : null,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      limit,
+      sort,
+      contributors,
+    });
+  } catch (error) {
+    console.error("Error getting repository contributors:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
