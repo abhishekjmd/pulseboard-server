@@ -151,7 +151,7 @@ export const inviteUser = async (
       data: {
         userId: userToInvite.id,
         workspaceId,
-        role: "Member",
+        role: "member",
       },
     });
     res.status(200).json({
