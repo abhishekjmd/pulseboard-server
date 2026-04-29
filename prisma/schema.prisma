@@ -21,26 +21,40 @@ model User {
   id        Int      @id @default(autoincrement())
   name      String
   email     String   @unique
-  password String
+  password  String
   createdAt DateTime @default(now())
 
   memberships Membership[]
 }
 
 model Workspace {
-  id Int @id @default(autoincrement())
-  name String
+  id        Int      @id @default(autoincrement())
+  name      String
   createdAt DateTime @default(now())
 
-  memberships Membership[]
+  memberships  Membership[]
+  repositories Repository[]
 }
 
 model Membership {
-  id Int @id @default(autoincrement())
-  userId Int
+  id          Int            @id @default(autoincrement())
+  userId      Int
   workspaceId Int
-  role MembershipRole
-  user User @relation(fields: [userId], references: [id])
+  role        MembershipRole
+  user        User           @relation(fields: [userId], references: [id])
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id])
+
+  @@unique([userId, workspaceId])
+}
+
+model Repository {
+  id          Int    @id @default(autoincrement())
+  name        String
+  owner       String
+  githubId    String
+  workspaceId Int
+
   workspace Workspace @relation(fields: [workspaceId], references: [id])
-  @@unique([userId,workspaceId])
+
+  @@unique([owner, name, workspaceId])
 }
