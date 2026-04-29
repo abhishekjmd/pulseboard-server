@@ -4,6 +4,26 @@ import { PrismaPg } from "@prisma/adapter-pg";
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
+const getAuthorizedRepoForUser = async (userId: number, repoId: number) => {
+  const repo = await prisma.repository.findUnique({
+    where: { id: repoId },
+  });
+  if (!repo) {
+    return { repo: null, isAuthorized: false };
+  }
+
+  const membership = await prisma.membership.findUnique({
+    where: {
+      userId_workspaceId: {
+        userId,
+        workspaceId: repo.workspaceId,
+      },
+    },
+  });
+
+  return { repo, isAuthorized: Boolean(membership) };
+};
+
 export const connectRepo = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
@@ -128,27 +148,74 @@ export const getRepoCommits = async (req: Request, res: Response) => {
       });
     }
 
-    const repo = await prisma.repository.findUnique({
-      where: { id: repoId },
-    });
-
+    const { repo, isAuthorized } = await getAuthorizedRepoForUser(userId, repoId);
     if (!repo) {
       return res.status(404).json({
         success: false,
         message: "Repository not found",
       });
     }
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
 
-    const membership = await prisma.membership.findUnique({
-      where: {
-        userId_workspaceId: {
-          userId,
-          workspaceId: repo.workspaceId,
-        },
+    const commits = await prisma.commit.findMany({
+      where: { repositoryId: repo.id },
+      orderBy: { date: "desc" },
+      take: 20,
+      select: {
+        message: true,
+        authorName: true,
+        date: true,
       },
     });
 
-    if (!membership) {
+    return res.status(200).json({
+      success: true,
+      commits: commits.map((commit) => ({
+        message: commit.message,
+        author: commit.authorName,
+        date: commit.date,
+      })),
+    });
+  } catch (error) {
+    console.error("Error fetching repository commits:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+export const syncCommits = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    const repoId = Number(req.params.id);
+    if (Number.isNaN(repoId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid repository id",
+      });
+    }
+
+    const { repo, isAuthorized } = await getAuthorizedRepoForUser(userId, repoId);
+    if (!repo) {
+      return res.status(404).json({
+        success: false,
+        message: "Repository not found",
+      });
+    }
+    if (!isAuthorized) {
       return res.status(403).json({
         success: false,
         message: "Access denied",
@@ -156,9 +223,8 @@ export const getRepoCommits = async (req: Request, res: Response) => {
     }
 
     const githubResponse = await fetch(
-      `https://api.github.com/repos/${repo.owner}/${repo.name}/commits?per_page=10`,
+      `https://api.github.com/repos/${repo.owner}/${repo.name}/commits?per_page=50`,
     );
-
     if (!githubResponse.ok) {
       return res.status(500).json({
         success: false,
@@ -166,21 +232,49 @@ export const getRepoCommits = async (req: Request, res: Response) => {
       });
     }
 
-    const data = await githubResponse.json();
-    const commits = Array.isArray(data)
-      ? data.map((commit) => ({
-          message: commit?.commit?.message ?? null,
-          author: commit?.commit?.author?.name ?? null,
-          date: commit?.commit?.author?.date ?? null,
-        }))
-      : [];
+    const githubCommits = await githubResponse.json();
+    if (!Array.isArray(githubCommits)) {
+      return res.status(500).json({
+        success: false,
+        message: "Invalid commit payload from GitHub",
+      });
+    }
+
+    const mappedCommits = githubCommits
+      .map((commit) => {
+        const sha = commit?.sha;
+        const message = commit?.commit?.message;
+        const authorName = commit?.commit?.author?.name;
+        const authorEmail = commit?.commit?.author?.email;
+        const authorDate = commit?.commit?.author?.date;
+
+        if (!sha || !message || !authorName || !authorEmail || !authorDate) {
+          return null;
+        }
+
+        return {
+          sha,
+          message,
+          authorName,
+          authorEmail,
+          date: new Date(authorDate),
+          repositoryId: repo.id,
+        };
+      })
+      .filter((commit): commit is NonNullable<typeof commit> => commit !== null);
+
+    const result = await prisma.commit.createMany({
+      data: mappedCommits,
+      skipDuplicates: true,
+    });
 
     return res.status(200).json({
       success: true,
-      commits,
+      message: "Commits synced successfully",
+      count: result.count,
     });
   } catch (error) {
-    console.error("Error fetching repository commits:", error);
+    console.error("Error syncing repository commits:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
