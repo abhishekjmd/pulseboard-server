@@ -1,10 +1,10 @@
 import { NextFunction, Request, Response } from "express";
-import { PrismaClient } from "../../generated/prisma";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcrypt";
+import { prisma } from "../../prisma";
 
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
-const prisma = new PrismaClient({ adapter });
+
+
 
 export const signup = async (
   req: Request,

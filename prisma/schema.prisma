@@ -5,11 +5,11 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 enum MembershipRole {
@@ -71,3 +71,4 @@ model Commit {
 
   repository Repository @relation(fields: [repositoryId], references: [id])
 }
+

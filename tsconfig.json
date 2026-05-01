@@ -1,18 +1,16 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "typeRoots": ["./node_modules/@types", "./types"],
-    "module": "NodeNext",
-    "moduleResolution": "nodenext",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",   // ✅ ADD THIS
+    "outDir": "./dist",
+    "rootDir": ".",
     "esModuleInterop": true,
     "strict": false,
-    "outDir": "./dist",
     "skipLibCheck": true,
-    // "files": ["types/express.d.ts"] 
+    "typeRoots": ["./node_modules/@types", "./types"]
   },
-  "include": ["**/*.ts", "types"],
-  "exclude": ["node_modules", "dist"],
-  "ts-node": {
-    "files": true   // 👈 this is the key — forces ts-node to respect "files" and "include"
-  }
+  "include": ["./**/*.ts", "types"],
+  "exclude": ["node_modules", "dist"]
 }

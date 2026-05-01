@@ -1,11 +1,9 @@
-import { PrismaPg } from "@prisma/adapter-pg";
 import { NextFunction, Request, Response } from "express";
-import { PrismaClient } from "../../generated/prisma";
 import brcypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { prisma } from "../../prisma";
 
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
-const prisma = new PrismaClient({ adapter });
+
 
 export const login = async (
   req: Request,

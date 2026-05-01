@@ -16,6 +16,14 @@ app.use("/api/repos", repoRoutes);
 app.use(errorHandler);
 
 startRepoSyncJob();
-void runRepoSyncBatch();
 
-app.listen(3000, () => console.log("Server running on http://localhost:3000"));
+setTimeout(() => {
+  console.log("[INIT] Running initial sync...");
+  runRepoSyncBatch().catch((err) => console.error("[INIT SYNC ERROR]", err));
+}, 5000);
+
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
