@@ -5,6 +5,7 @@ import {
   getRepoById,
   getRepoCommits,
   getRepoContributors,
+  getRepoContributions,
   syncCommits,
   syncPullRequests,
 } from "../controllers/repo/repo.controller";
@@ -21,6 +22,7 @@ router.get("/:id", optionalProtect, getRepoById);
 router.get("/:id/commits", optionalProtect, getRepoCommits);
 router.get("/:id/analytics", optionalProtect, getRepoAnalytics);
 router.get("/:id/contributors", optionalProtect, getRepoContributors);
+router.get("/:id/contributions", optionalProtect, getRepoContributions);
 router.post("/:id/sync-commits", optionalProtect, syncCommits);
 router.post("/:id/sync-prs", optionalProtect, syncPullRequests);
 

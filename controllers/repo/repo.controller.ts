@@ -305,3 +305,46 @@ export const syncPullRequests = async (req: Request, res: Response) => {
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 };
+
+export const getRepoContributions = async (req: Request, res: Response) => {
+  try {
+    const repoId = Number(req.params.id);
+    const repo = await prisma.repository.findUnique({
+      where: { id: repoId },
+      include: { workspace: true },
+    });
+
+    if (!repo) return res.status(404).json({ success: false, message: "Repository not found" });
+
+    const isPublic = repo.workspace.name === "Public Sandbox";
+    const userId = req.user?.id;
+
+    if (!isPublic) {
+      if (!userId) return res.status(401).json({ success: false, message: "Unauthorized" });
+      const { isAuthorized } = await getAuthorizedRepoForUser(userId, repoId);
+      if (!isAuthorized) return res.status(403).json({ success: false, message: "Access denied" });
+    }
+
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    oneYearAgo.setHours(0, 0, 0, 0);
+
+    const commits = await prisma.commit.findMany({
+      where: {
+        repositoryId: repo.id,
+        date: { gte: oneYearAgo },
+      },
+      select: { date: true },
+    });
+
+    const contributions = commits.reduce((acc: Record<string, number>, commit) => {
+      const dateStr = commit.date.toISOString().split('T')[0];
+      acc[dateStr] = (acc[dateStr] || 0) + 1;
+      return acc;
+    }, {});
+
+    return res.status(200).json({ success: true, contributions });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
