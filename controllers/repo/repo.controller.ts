@@ -36,9 +36,10 @@ export const getRepoById = async (req: Request, res: Response) => {
 
     const isPublic = repo.workspace.name === "Public Sandbox";
     const userId = req.user?.id;
+    const syncStatus = repo.lastPrSyncAt ? "ready" : "processing";
 
     if (isPublic) {
-      return res.status(200).json({ success: true, data: repo });
+      return res.status(200).json({ success: true, data: { ...repo, syncStatus } });
     }
 
     if (!userId) return res.status(401).json({ success: false, message: "Unauthorized" });
@@ -46,7 +47,7 @@ export const getRepoById = async (req: Request, res: Response) => {
     const { isAuthorized } = await getAuthorizedRepoForUser(userId, repoId);
     if (!isAuthorized) return res.status(403).json({ success: false, message: "Access denied" });
 
-    return res.status(200).json({ success: true, data: repo });
+    return res.status(200).json({ success: true, data: { ...repo, syncStatus } });
   } catch (error) {
     return res.status(500).json({ success: false, message: "Internal server error" });
   }

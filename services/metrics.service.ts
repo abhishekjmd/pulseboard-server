@@ -1,11 +1,5 @@
 import { prisma } from "../prisma";
-import { MetricsScope, TimeWindowDays } from "../types/metrics.types";
-
-interface MetricValue {
-  current: number;
-  previous: number;
-  change: number; // percentage change
-}
+import { MetricsScope } from "../types/metrics.types";
 
 export const calculateChange = (current: number, previous: number): number => {
   if (previous === 0) return current > 0 ? 100 : 0;
@@ -22,11 +16,21 @@ const buildWhereClause = (scope: { repositoryId?: number; workspaceId?: number }
   return where;
 };
 
-export const getCycleTimeMetrics = async (scope: MetricsScope) => {
-  const baseWhere = buildWhereClause(scope);
+/**
+ * Standardizes time windows for consistent comparison
+ */
+const getWindows = (scope: MetricsScope) => {
   const now = new Date();
   const currentCutoff = scope.cutoffDate;
-  const previousCutoff = new Date(currentCutoff.getTime() - (now.getTime() - currentCutoff.getTime()));
+  const windowMs = now.getTime() - currentCutoff.getTime();
+  const previousCutoff = new Date(currentCutoff.getTime() - windowMs);
+  
+  return { now, currentCutoff, previousCutoff };
+};
+
+export const getCycleTimeMetrics = async (scope: MetricsScope) => {
+  const baseWhere = buildWhereClause(scope);
+  const { now, currentCutoff, previousCutoff } = getWindows(scope);
 
   const fetchCycleTime = async (start: Date, end: Date) => {
     const prs = await prisma.pullRequest.findMany({
@@ -54,9 +58,7 @@ export const getCycleTimeMetrics = async (scope: MetricsScope) => {
 
 export const getThroughputMetrics = async (scope: MetricsScope) => {
   const baseWhere = buildWhereClause(scope);
-  const now = new Date();
-  const currentCutoff = scope.cutoffDate;
-  const previousCutoff = new Date(currentCutoff.getTime() - (now.getTime() - currentCutoff.getTime()));
+  const { now, currentCutoff, previousCutoff } = getWindows(scope);
 
   const fetchCount = (start: Date, end: Date) => 
     prisma.pullRequest.count({
@@ -79,27 +81,42 @@ export const getThroughputMetrics = async (scope: MetricsScope) => {
 export const getStalePRs = async (scope: MetricsScope, staleDays = 7) => {
   const baseWhere = buildWhereClause(scope);
   const now = new Date();
-  const thresholdDate = new Date();
-  thresholdDate.setDate(thresholdDate.getDate() - staleDays);
-
-  const where = {
-    ...baseWhere,
-    state: "open",
-    updatedAt: { lt: thresholdDate },
+  
+  const getStaleThreshold = (baseDate: Date) => {
+    const d = new Date(baseDate);
+    d.setDate(d.getDate() - staleDays);
+    return d;
   };
 
-  const currentCount = await prisma.pullRequest.count({ where });
+  const currentThreshold = getStaleThreshold(now);
   
-  // For stale PRs, "previous" could be count at the cutoff point
-  // But a simpler approach is comparing to window start
-  const prevThreshold = new Date(scope.cutoffDate);
-  prevThreshold.setDate(prevThreshold.getDate() - staleDays);
+  // Current Stale PRs: Open AND created more than 7 days ago
+  // Note: Per requirements, this does NOT depend on the selected range window
+  const currentCount = await prisma.pullRequest.count({
+    where: {
+      ...baseWhere,
+      state: "open",
+      createdAt: { lt: currentThreshold },
+    },
+  });
   
+  // For trend, we look at what the stale count was at the start of the current window
+  const { currentCutoff } = getWindows(scope);
+  const previousThreshold = getStaleThreshold(currentCutoff);
+
   const previousCount = await prisma.pullRequest.count({
     where: {
       ...baseWhere,
       state: "open",
-      updatedAt: { lt: prevThreshold },
+      createdAt: { lt: previousThreshold },
+      // To be accurate, they should have been open AT THAT TIME
+      // But since we don't have historical state snapshots, we approximate
+      // with PRs created before that threshold that are still open or were closed later.
+      OR: [
+        { state: "open" },
+        { closedAt: { gt: currentCutoff } },
+        { mergedAt: { gt: currentCutoff } }
+      ]
     }
   });
 
@@ -111,16 +128,15 @@ export const getStalePRs = async (scope: MetricsScope, staleDays = 7) => {
 
 export const getActiveDevelopers = async (scope: MetricsScope) => {
   const baseWhere = buildWhereClause(scope);
-  const now = new Date();
-  const currentCutoff = scope.cutoffDate;
-  const previousCutoff = new Date(currentCutoff.getTime() - (now.getTime() - currentCutoff.getTime()));
+  const { now, currentCutoff, previousCutoff } = getWindows(scope);
 
   const fetchDevCount = async (start: Date, end: Date) => {
     const devs = await prisma.pullRequest.groupBy({
       by: ['authorName'],
       where: {
         ...baseWhere,
-        createdAt: { gte: start, lte: end },
+        state: "merged",
+        mergedAt: { gte: start, lte: end },
       },
     });
     return devs.length;
@@ -142,7 +158,8 @@ export const getTopContributors = async (scope: MetricsScope) => {
     by: ['authorName'],
     where: {
       ...baseWhere,
-      createdAt: { gte: scope.cutoffDate },
+      state: "merged",
+      mergedAt: { gte: scope.cutoffDate },
     },
     _count: {
       _all: true,
@@ -164,6 +181,7 @@ export const getTopContributors = async (scope: MetricsScope) => {
 export const getRecentActivity = async (scope: MetricsScope) => {
   const baseWhere = buildWhereClause(scope);
   
+  // Activity shows what's happening now, so we use updatedAt
   return prisma.pullRequest.findMany({
     where: {
       ...baseWhere,
@@ -244,4 +262,3 @@ export const getHealthMetrics = async (scope: MetricsScope) => {
     activityHistory,
   };
 };
-
