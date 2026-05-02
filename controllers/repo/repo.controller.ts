@@ -61,6 +61,16 @@ export const connectRepo = async (req: Request, res: Response) => {
 
     const normalizedOwner = owner.trim();
     const normalizedRepo = repo.trim();
+    const githubToken = process.env.GITHUB_TOKEN;
+    if (!githubToken) {
+      throw new Error("GITHUB_TOKEN is not set in environment variables");
+    }
+
+    console.log("[connectRepo] owner, repo, workspaceId:", {
+      owner: normalizedOwner,
+      repo: normalizedRepo,
+      workspaceId: numericWorkspaceId,
+    });
 
     const membership = await prisma.membership.findUnique({
       where: {
@@ -102,50 +112,40 @@ export const connectRepo = async (req: Request, res: Response) => {
       });
     }
 
-    const githubUrl = `https://api.github.com/repos/${normalizedOwner}/${normalizedRepo}`;
-    const githubResponse = await fetch(githubUrl, {
+    const githubResponse = await fetch(
+      `https://api.github.com/repos/${normalizedOwner}/${normalizedRepo}`,
+      {
       headers: {
-        "User-Agent": "Pulseboard",
-        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+        "User-Agent": "pulseboard-app",
       },
-    });
+      },
+    );
     console.log("[connectRepo] GitHub response status:", githubResponse.status);
-    if (githubResponse.status === 404) {
-      return res.status(404).json({
-        success: false,
-        message: "Repository not found on GitHub",
-      });
+
+    const remainingHeader = githubResponse.headers.get("x-ratelimit-remaining");
+    const resetHeader = githubResponse.headers.get("x-ratelimit-reset");
+    if (remainingHeader !== null) {
+      const remaining = Number(remainingHeader);
+      if (!Number.isNaN(remaining) && remaining < 10) {
+        console.warn("[connectRepo] GitHub rate limit is low", {
+          remaining,
+          resetAt: resetHeader,
+        });
+      }
     }
 
     if (!githubResponse.ok) {
       const errorText = await githubResponse.text();
-      let githubMessage = "Unknown GitHub error";
-
-      try {
-        const parsed = JSON.parse(errorText) as { message?: string };
-        githubMessage = parsed.message ?? githubMessage;
-      } catch {
-        if (errorText.trim()) {
-          githubMessage = errorText.trim();
-        }
-      }
-
-      console.error("[connectRepo] GitHub fetch failed", {
+      console.error("GitHub API error:", {
         status: githubResponse.status,
         body: errorText,
-        url: githubUrl,
       });
 
-      if (githubResponse.status === 401 || githubResponse.status === 403 || githubResponse.status === 429) {
-        return res.status(502).json({
-          success: false,
-          message: `GitHub API unavailable: ${githubMessage}`,
-        });
-      }
-
-      return res.status(502).json({
+      return res.status(githubResponse.status).json({
         success: false,
-        message: `GitHub API error (${githubResponse.status}): ${githubMessage}`,
+        message: "GitHub API error",
+        details: errorText,
       });
     }
 
