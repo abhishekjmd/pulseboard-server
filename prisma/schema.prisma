@@ -53,9 +53,11 @@ model Repository {
   owner       String
   githubId    String
   workspaceId Int
+  lastPrSyncAt DateTime?
 
   workspace Workspace @relation(fields: [workspaceId], references: [id])
   commits   Commit[]
+  pullRequests PullRequest[]
 
   @@unique([owner, name, workspaceId])
 }
@@ -72,3 +74,22 @@ model Commit {
   repository Repository @relation(fields: [repositoryId], references: [id])
 }
 
+model PullRequest {
+  id           Int       @id @default(autoincrement())
+  githubId     Int       @unique
+  number       Int
+  title        String
+  state        String
+  authorName   String
+  createdAt    DateTime
+  updatedAt    DateTime
+  mergedAt     DateTime?
+  closedAt     DateTime?
+  
+  repositoryId Int
+  repository   Repository @relation(fields: [repositoryId], references: [id])
+
+  @@index([repositoryId, state])
+  @@index([repositoryId, authorName])
+  @@unique([repositoryId, number])
+}

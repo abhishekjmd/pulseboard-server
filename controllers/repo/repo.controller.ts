@@ -23,7 +23,25 @@ const getAuthorizedRepoForUser = async (userId: number, repoId: number) => {
   return { repo, isAuthorized: Boolean(membership) };
 };
 
+export const getRepoById = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: "Unauthorized" });
+
+    const repoId = Number(req.params.id);
+    const { repo, isAuthorized } = await getAuthorizedRepoForUser(userId, repoId);
+
+    if (!repo) return res.status(404).json({ success: false, message: "Repository not found" });
+    if (!isAuthorized) return res.status(403).json({ success: false, message: "Access denied" });
+
+    return res.status(200).json({ success: true, data: repo });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
 export const connectRepo = async (req: Request, res: Response) => {
+
   try {
     const userId = req.user?.id;
     const { workspaceId, owner, repo } = req.body;

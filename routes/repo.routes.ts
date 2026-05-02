@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   connectRepo,
   getRepoAnalytics,
+  getRepoById,
   getRepoCommits,
   getRepoContributors,
   syncCommits,
@@ -14,7 +15,9 @@ router.get("/", (_req, res) => {
   res.json({ message: "Repo route working" });
 });
 
+router.get("/:id", protect, getRepoById);
 router.post("/", protect, connectRepo);
+
 router.post("/connect", protect, connectRepo);
 router.post("/:id/sync-commits", protect, syncCommits);
 router.get("/:id/commits", protect, getRepoCommits);
