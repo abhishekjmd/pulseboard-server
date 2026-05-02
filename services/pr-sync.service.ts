@@ -23,7 +23,7 @@ export const syncRepoPRsById = async (repoId: number) => {
   const perPage = 100;
   let hasMore = true;
   let prsProcessedTotal = 0;
-  let latestUpdatedAtAcrossSync = repo.lastPrSyncAt;
+  let mergedPrsTotal = 0;
 
   console.log(`[PR SYNC] Starting for ${repo.owner}/${repo.name} (last sync: ${repo.lastPrSyncAt || "never"})`);
 
@@ -42,7 +42,7 @@ export const syncRepoPRsById = async (repoId: number) => {
     const prs = await response.json();
     
     if (!Array.isArray(prs) || prs.length === 0) {
-      console.log(`[PR SYNC] No more PRs found on page ${page}`);
+      console.log(`[PR SYNC] End of pagination reached at page ${page}`);
       hasMore = false;
       break;
     }
@@ -54,22 +54,26 @@ export const syncRepoPRsById = async (repoId: number) => {
     for (const pr of prs) {
       const updatedAt = new Date(pr.updated_at);
 
-      // Incremental sync logic
-      if (repo.lastPrSyncAt && updatedAt <= repo.lastPrSyncAt) {
+      // Incremental sync logic: 
+      // We only stop if we are past the first page 
+      // AND we hit a PR that was updated before our last sync.
+      if (page > 1 && repo.lastPrSyncAt && updatedAt <= repo.lastPrSyncAt) {
         foundSyncedPR = true;
         break; 
       }
 
-      if (!latestUpdatedAtAcrossSync || updatedAt > latestUpdatedAtAcrossSync) {
-        latestUpdatedAtAcrossSync = updatedAt;
-      }
-
-      let state = pr.state;
+      // STRICT STATE MAPPING (per requirements)
+      // If merged_at exists -> state is "merged"
+      // Else if state is "closed" -> state is "closed"
+      // Else -> state is "open"
+      let state = "open";
       if (pr.merged_at) {
         state = "merged";
+        mergedPrsTotal++;
+      } else if (pr.state === "closed") {
+        state = "closed";
       }
 
-      // @ts-ignore - Handle BigInt if Prisma types haven't refreshed yet
       await prisma.pullRequest.upsert({
         where: { githubId: BigInt(pr.id) },
         update: {
@@ -97,31 +101,32 @@ export const syncRepoPRsById = async (repoId: number) => {
     }
 
     prsProcessedTotal += prsOnPageProcessed;
-    console.log(`[PR SYNC] Page ${page}: Processed ${prsOnPageProcessed} new/updated PRs`);
+    console.log(`[PR SYNC] Page ${page}: Processed ${prsOnPageProcessed} PRs`);
 
     if (foundSyncedPR) {
-      hasMore = false;
-      break;
-    }
-
-    // Safety limit for initial sync
-    if (!repo.lastPrSyncAt && page >= 10) {
-      console.log(`[PR SYNC] Reached max bootstrap pages (10)`);
+      console.log(`[PR SYNC] Found already synced PRs. Stopping incremental sync.`);
       hasMore = false;
       break;
     }
 
     page++;
+    
+    // Safety break to prevent infinite loops, but higher than 10
+    if (page > 100) { 
+      console.log(`[PR SYNC] Safety limit reached (100 pages). Stopping.`);
+      break; 
+    }
   }
 
   // Always update lastPrSyncAt to the current time to mark the sync as completed
-  // This satisfies the 15-minute caching requirement.
   await prisma.repository.update({
     where: { id: repo.id },
     data: { lastPrSyncAt: new Date() },
   });
-  console.log(`[PR SYNC] Updated lastPrSyncAt for ${repo.name} to now`);
 
-  console.log(`[PR SYNC] Completed for ${repo.name}. Total PRs processed: ${prsProcessedTotal}`);
+  console.log(`[PR SYNC] COMPLETED for ${repo.owner}/${repo.name}`);
+  console.log(`[PR SYNC] Total PRs synced/updated: ${prsProcessedTotal}`);
+  console.log(`[PR SYNC] Total merged PRs identified: ${mergedPrsTotal}`);
+  
   return prsProcessedTotal;
 };

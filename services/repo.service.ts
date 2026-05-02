@@ -9,12 +9,25 @@ export const syncRepoCommitsById = async (repoId: number) => {
     throw new Error("Repository not found");
   }
 
+  const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+  const headers: HeadersInit = {
+    Accept: "application/vnd.github.v3+json",
+    "User-Agent": "pulseboard-app",
+  };
+
+  if (GITHUB_TOKEN) {
+    headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
+  }
+
   const githubResponse = await fetch(
     `https://api.github.com/repos/${repo.owner}/${repo.name}/commits?per_page=50`,
+    { headers }
   );
 
   if (!githubResponse.ok) {
-    throw new Error("Failed to fetch commits from GitHub");
+    const errorText = await githubResponse.text();
+    console.error(`[COMMIT SYNC] Error: ${githubResponse.status} - ${errorText}`);
+    throw new Error(`Failed to fetch commits from GitHub: ${githubResponse.status}`);
   }
 
   const githubCommits = await githubResponse.json();
