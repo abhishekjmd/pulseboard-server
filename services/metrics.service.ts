@@ -78,6 +78,17 @@ export const getThroughputMetrics = async (scope: MetricsScope) => {
   };
 };
 
+export const getOpenPRs = async (scope: MetricsScope) => {
+  const baseWhere = buildWhereClause(scope);
+  const count = await prisma.pullRequest.count({
+    where: {
+      ...baseWhere,
+      state: "open",
+    },
+  });
+  return { count };
+};
+
 export const getStalePRs = async (scope: MetricsScope, staleDays = 7) => {
   const baseWhere = buildWhereClause(scope);
   const now = new Date();
@@ -90,8 +101,6 @@ export const getStalePRs = async (scope: MetricsScope, staleDays = 7) => {
 
   const currentThreshold = getStaleThreshold(now);
   
-  // Current Stale PRs: Open AND created more than 7 days ago
-  // Note: Per requirements, this does NOT depend on the selected range window
   const currentCount = await prisma.pullRequest.count({
     where: {
       ...baseWhere,
@@ -100,7 +109,6 @@ export const getStalePRs = async (scope: MetricsScope, staleDays = 7) => {
     },
   });
   
-  // For trend, we look at what the stale count was at the start of the current window
   const { currentCutoff } = getWindows(scope);
   const previousThreshold = getStaleThreshold(currentCutoff);
 
@@ -109,9 +117,6 @@ export const getStalePRs = async (scope: MetricsScope, staleDays = 7) => {
       ...baseWhere,
       state: "open",
       createdAt: { lt: previousThreshold },
-      // To be accurate, they should have been open AT THAT TIME
-      // But since we don't have historical state snapshots, we approximate
-      // with PRs created before that threshold that are still open or were closed later.
       OR: [
         { state: "open" },
         { closedAt: { gt: currentCutoff } },
@@ -242,10 +247,11 @@ export const getActivityHistory = async (scope: MetricsScope) => {
 };
 
 export const getHealthMetrics = async (scope: MetricsScope) => {
-  const [cycleTime, throughput, stalePrs, activeDevs, topContributors, recentActivity, activityHistory] = await Promise.all([
+  const [cycleTime, throughput, stalePrs, openPrs, activeDevs, topContributors, recentActivity, activityHistory] = await Promise.all([
     getCycleTimeMetrics(scope),
     getThroughputMetrics(scope),
     getStalePRs(scope),
+    getOpenPRs(scope),
     getActiveDevelopers(scope),
     getTopContributors(scope),
     getRecentActivity(scope),
@@ -256,6 +262,7 @@ export const getHealthMetrics = async (scope: MetricsScope) => {
     cycleTime,
     throughput,
     stalePrs,
+    openPrs,
     activeDevs,
     topContributors,
     recentActivity,

@@ -32,6 +32,7 @@ const formatHealthData = (metrics: any) => ({
     avgCycleTimeHours: metrics.cycleTime.averageHours,
     prThroughput: metrics.throughput.count,
     stalePrsCount: metrics.stalePrs.count,
+    openPrsCount: metrics.openPrs.count,
     velocityIndex: metrics.activeDevs.count,
   },
   trends: {
