@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { syncRepoCommitsById } from "../../services/repo.service";
+import { syncRepoPRsById } from "../../services/pr-sync.service";
 import { prisma } from "../../prisma";
 
 
@@ -481,3 +482,52 @@ export const getRepoContributors = async (req: Request, res: Response) => {
     });
   }
 };
+
+export const syncPullRequests = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    const repoId = Number(req.params.id);
+    if (Number.isNaN(repoId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid repository id",
+      });
+    }
+
+    const { repo, isAuthorized } = await getAuthorizedRepoForUser(userId, repoId);
+    if (!repo) {
+      return res.status(404).json({
+        success: false,
+        message: "Repository not found",
+      });
+    }
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    const count = await syncRepoPRsById(repo.id);
+
+    return res.status(200).json({
+      success: true,
+      message: "PRs synced successfully",
+      count,
+    });
+  } catch (error) {
+    console.error("Error syncing repository PRs:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+

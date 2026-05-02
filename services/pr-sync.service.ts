@@ -12,50 +12,56 @@ export const syncRepoPRsById = async (repoId: number) => {
   const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
   const headers: HeadersInit = {
     Accept: "application/vnd.github.v3+json",
+    "User-Agent": "pulseboard-app",
   };
 
   if (GITHUB_TOKEN) {
-    headers.Authorization = `token ${GITHUB_TOKEN}`;
+    headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
   }
 
   let page = 1;
   const perPage = 100;
   let hasMore = true;
-  let prsProcessed = 0;
-  let latestUpdatedAt = repo.lastPrSyncAt;
+  let prsProcessedTotal = 0;
+  let latestUpdatedAtAcrossSync = repo.lastPrSyncAt;
 
   console.log(`[PR SYNC] Starting for ${repo.owner}/${repo.name} (last sync: ${repo.lastPrSyncAt || "never"})`);
 
   while (hasMore) {
     const url = `https://api.github.com/repos/${repo.owner}/${repo.name}/pulls?state=all&sort=updated&direction=desc&per_page=${perPage}&page=${page}`;
     
+    console.log(`[PR SYNC] Fetching page ${page}...`);
     const response = await fetch(url, { headers });
     
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Failed to fetch PRs from GitHub: ${response.status} - ${errorText}`);
+      console.error(`[PR SYNC] GitHub API Error (Page ${page}): ${response.status} - ${errorText}`);
+      throw new Error(`Failed to fetch PRs from GitHub: ${response.status}`);
     }
 
     const prs = await response.json();
     
     if (!Array.isArray(prs) || prs.length === 0) {
+      console.log(`[PR SYNC] No more PRs found on page ${page}`);
       hasMore = false;
       break;
     }
 
-    const prsToUpsert = [];
+    console.log(`[PR SYNC] Page ${page}: Received ${prs.length} PRs`);
+    let prsOnPageProcessed = 0;
+    let foundSyncedPR = false;
 
     for (const pr of prs) {
       const updatedAt = new Date(pr.updated_at);
 
       // Incremental sync logic
       if (repo.lastPrSyncAt && updatedAt <= repo.lastPrSyncAt) {
-        hasMore = false;
-        break;
+        foundSyncedPR = true;
+        break; 
       }
 
-      if (!latestUpdatedAt || updatedAt > latestUpdatedAt) {
-        latestUpdatedAt = updatedAt;
+      if (!latestUpdatedAtAcrossSync || updatedAt > latestUpdatedAtAcrossSync) {
+        latestUpdatedAtAcrossSync = updatedAt;
       }
 
       let state = pr.state;
@@ -63,49 +69,44 @@ export const syncRepoPRsById = async (repoId: number) => {
         state = "merged";
       }
 
-      prsToUpsert.push({
-        githubId: pr.id,
-        number: pr.number,
-        title: pr.title,
-        state,
-        authorName: pr.user.login,
-        createdAt: new Date(pr.created_at),
-        updatedAt: updatedAt,
-        mergedAt: pr.merged_at ? new Date(pr.merged_at) : null,
-        closedAt: pr.closed_at ? new Date(pr.closed_at) : null,
-        repositoryId: repo.id,
+      // @ts-ignore - Handle BigInt if Prisma types haven't refreshed yet
+      await prisma.pullRequest.upsert({
+        where: { githubId: BigInt(pr.id) },
+        update: {
+          state,
+          title: pr.title,
+          updatedAt: updatedAt,
+          mergedAt: pr.merged_at ? new Date(pr.merged_at) : null,
+          closedAt: pr.closed_at ? new Date(pr.closed_at) : null,
+        },
+        create: {
+          githubId: BigInt(pr.id),
+          number: pr.number,
+          title: pr.title,
+          state,
+          authorName: pr.user?.login || "unknown",
+          createdAt: new Date(pr.created_at),
+          updatedAt: updatedAt,
+          mergedAt: pr.merged_at ? new Date(pr.merged_at) : null,
+          closedAt: pr.closed_at ? new Date(pr.closed_at) : null,
+          repositoryId: repo.id,
+        },
       });
+      
+      prsOnPageProcessed++;
     }
 
-    if (prsToUpsert.length > 0) {
-      await prisma.$transaction(
-        prsToUpsert.map((prData) =>
-          prisma.pullRequest.upsert({
-            where: { githubId: prData.githubId },
-            update: {
-              state: prData.state,
-              title: prData.title,
-              updatedAt: prData.updatedAt,
-              mergedAt: prData.mergedAt,
-              closedAt: prData.closedAt,
-            },
-            create: prData,
-          })
-        )
-      );
-      prsProcessed += prsToUpsert.length;
-    }
+    prsProcessedTotal += prsOnPageProcessed;
+    console.log(`[PR SYNC] Page ${page}: Processed ${prsOnPageProcessed} new/updated PRs`);
 
-    // Stop early if we didn't process the full page (meaning we hit the break condition)
-    if (prsToUpsert.length < prs.length) {
+    if (foundSyncedPR) {
       hasMore = false;
       break;
     }
 
-    // Safety limit for initial sync (prevent infinite loop / massive rate limit hit)
-    // 10 pages * 100 = 1000 PRs max per sync run for initial bootstrap
+    // Safety limit for initial sync
     if (!repo.lastPrSyncAt && page >= 10) {
-      console.log(`[PR SYNC] Reached max bootstrap pages (10) for ${repo.owner}/${repo.name}`);
+      console.log(`[PR SYNC] Reached max bootstrap pages (10)`);
       hasMore = false;
       break;
     }
@@ -113,13 +114,14 @@ export const syncRepoPRsById = async (repoId: number) => {
     page++;
   }
 
-  // Update last sync time if we successfully processed PRs or if it was null
-  if (latestUpdatedAt && (!repo.lastPrSyncAt || latestUpdatedAt > repo.lastPrSyncAt)) {
+  if (latestUpdatedAtAcrossSync && (!repo.lastPrSyncAt || latestUpdatedAtAcrossSync > repo.lastPrSyncAt)) {
     await prisma.repository.update({
       where: { id: repo.id },
-      data: { lastPrSyncAt: latestUpdatedAt },
+      data: { lastPrSyncAt: latestUpdatedAtAcrossSync },
     });
+    console.log(`[PR SYNC] Updated lastPrSyncAt for ${repo.name} to ${latestUpdatedAtAcrossSync.toISOString()}`);
   }
 
-  return prsProcessed;
+  console.log(`[PR SYNC] Completed for ${repo.name}. Total PRs processed: ${prsProcessedTotal}`);
+  return prsProcessedTotal;
 };
