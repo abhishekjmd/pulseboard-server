@@ -88,8 +88,7 @@ export const connectRepo = async (req: Request, res: Response) => {
 
     const existingRepo = await prisma.repository.findUnique({
       where: {
-        owner_name_workspaceId: {
-          workspaceId: numericWorkspaceId,
+        owner_name: {
           owner: normalizedOwner,
           name: normalizedRepo,
         },

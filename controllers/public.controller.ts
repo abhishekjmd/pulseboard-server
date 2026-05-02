@@ -20,24 +20,43 @@ export const analyzePublicRepo = async (req: Request, res: Response) => {
     const owner = match[1];
     const name = match[2].replace(/\.git$/, "");
 
-    // 1. Check if repo exists in ANY workspace
-    let repo = await prisma.repository.findFirst({
+    // 1. Check if repo exists (globally unique owner/name)
+    let repo = await prisma.repository.findUnique({
       where: {
-        owner,
-        name,
+        owner_name: {
+          owner,
+          name,
+        },
       },
     });
 
+    const CACHE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
+
     if (repo) {
+      const now = new Date();
+      const lastSync = repo.lastPrSyncAt ? new Date(repo.lastPrSyncAt) : null;
+      const isRecentlySynced = lastSync && (now.getTime() - lastSync.getTime() < CACHE_THRESHOLD_MS);
+
+      if (isRecentlySynced) {
+        return res.status(200).json({
+          success: true,
+          repoId: repo.id,
+          status: "ready",
+        });
+      }
+
+      // If not recently synced, trigger background sync
+      syncRepoPRsById(repo.id).catch(err => console.error("[PUBLIC ANALYZE] PR Sync Error:", err));
+      syncRepoCommitsById(repo.id).catch(err => console.error("[PUBLIC ANALYZE] Commit Sync Error:", err));
+
       return res.status(200).json({
         success: true,
         repoId: repo.id,
-        status: "ready",
+        status: "processing",
       });
     }
 
-    // 2. Create Repository in a "Public Sandbox" workspace
-    // Find or create the sandbox workspace
+    // 2. Create Repository if it doesn't exist
     let sandbox = await prisma.workspace.findFirst({
       where: { name: "Public Sandbox" },
     });
@@ -48,7 +67,6 @@ export const analyzePublicRepo = async (req: Request, res: Response) => {
       });
     }
 
-    // Verify repo on GitHub and get ID
     const githubResponse = await fetch(
       `https://api.github.com/repos/${owner}/${name}`,
       {
@@ -71,17 +89,13 @@ export const analyzePublicRepo = async (req: Request, res: Response) => {
         owner: githubData.owner.login,
         githubId: String(githubData.id),
         workspaceId: sandbox.id,
+        lastPrSyncAt: new Date(0), // Set to epoch so first sync always runs
       },
     });
 
-    // 3. Trigger Sync (Background or Wait?)
-    // Requirement says "trigger PR sync + commit sync"
-    // To make it feel "instant", we might return early, but the user wants to see metrics.
-    // We'll trigger them and the frontend will show skeletons.
-    
-    // Non-blocking sync triggers
-    syncRepoPRsById(repo.id).catch(err => console.error("[PUBLIC ANALYZE] PR Sync Error:", err));
-    syncRepoCommitsById(repo.id).catch(err => console.error("[PUBLIC ANALYZE] Commit Sync Error:", err));
+    // 3. Trigger initial sync
+    syncRepoPRsById(repo.id).catch(err => console.error("[PUBLIC ANALYZE] Initial PR Sync Error:", err));
+    syncRepoCommitsById(repo.id).catch(err => console.error("[PUBLIC ANALYZE] Initial Commit Sync Error:", err));
 
     return res.status(201).json({
       success: true,

@@ -59,7 +59,7 @@ model Repository {
   commits   Commit[]
   pullRequests PullRequest[]
 
-  @@unique([owner, name, workspaceId])
+  @@unique([owner, name])
 }
 
 model Commit {

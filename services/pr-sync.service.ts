@@ -114,13 +114,13 @@ export const syncRepoPRsById = async (repoId: number) => {
     page++;
   }
 
-  if (latestUpdatedAtAcrossSync && (!repo.lastPrSyncAt || latestUpdatedAtAcrossSync > repo.lastPrSyncAt)) {
-    await prisma.repository.update({
-      where: { id: repo.id },
-      data: { lastPrSyncAt: latestUpdatedAtAcrossSync },
-    });
-    console.log(`[PR SYNC] Updated lastPrSyncAt for ${repo.name} to ${latestUpdatedAtAcrossSync.toISOString()}`);
-  }
+  // Always update lastPrSyncAt to the current time to mark the sync as completed
+  // This satisfies the 15-minute caching requirement.
+  await prisma.repository.update({
+    where: { id: repo.id },
+    data: { lastPrSyncAt: new Date() },
+  });
+  console.log(`[PR SYNC] Updated lastPrSyncAt for ${repo.name} to now`);
 
   console.log(`[PR SYNC] Completed for ${repo.name}. Total PRs processed: ${prsProcessedTotal}`);
   return prsProcessedTotal;

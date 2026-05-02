@@ -50,6 +50,11 @@ export const syncRepoCommitsById = async (repoId: number) => {
     skipDuplicates: true,
   });
 
+  await prisma.repository.update({
+    where: { id: repo.id },
+    data: { lastPrSyncAt: new Date() },
+  });
+
   return result.count;
 };
 
