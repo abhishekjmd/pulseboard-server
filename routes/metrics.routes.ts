@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from "express";
-import { protect } from "../middlewares/auth.middleware";
+import { protect, optionalProtect } from "../middlewares/auth.middleware";
 import { getHealthMetrics } from "../services/metrics.service";
 import { prisma } from "../prisma";
 import { VALID_WINDOW_DAYS, TimeWindowDays, MetricsScope } from "../types/metrics.types";
@@ -40,13 +40,31 @@ const formatHealthData = (metrics: any) => ({
     staleTrend: metrics.stalePrs.change,
     velocityTrend: metrics.activeDevs.change,
   },
-  activities: metrics.recentActivity,
-  topContributors: metrics.topContributors,
+    activities: (metrics.recentActivity || []).map((pr: any) => {
+      const isStale = pr.state === "open" && 
+        (new Date().getTime() - new Date(pr.updatedAt).getTime() > 7 * 24 * 60 * 60 * 1000);
+      
+      let type = "PR_OPENED";
+      if (pr.state === "merged") type = "PR_MERGED";
+      else if (pr.state === "closed") type = "PR_CLOSED";
+      else if (isStale) type = "PR_STALE";
+
+      return {
+        id: pr.id,
+        type,
+        title: pr.title || 'Untitled Pull Request',
+        user: pr.authorName || 'Unknown',
+        timestamp: pr.updatedAt || new Date().toISOString(),
+        number: pr.number,
+      };
+    }),
+    topContributors: metrics.topContributors,
+    activityHistory: metrics.activityHistory,
 });
 
 router.get(
   "/repos/:id/health",
-  protect,
+  optionalProtect,
   asyncHandler(async (req, res) => {
     const repoId = parseInt(req.params.id as string, 10);
     const scope = getMetricsScope(req);
@@ -54,10 +72,33 @@ router.get(
 
     const repo = await prisma.repository.findUnique({
       where: { id: repoId },
+      include: { workspace: true },
     });
 
     if (!repo) {
       return res.status(404).json({ success: false, error: "Repository not found" });
+    }
+
+    // Authorization: Allow if user is authenticated OR if repo is in "Public Sandbox"
+    const userId = req.user?.id;
+    const isPublic = repo.workspace.name === "Public Sandbox";
+
+    if (!isPublic && !userId) {
+      return res.status(401).json({ success: false, error: "Authentication required" });
+    }
+
+    if (!isPublic && userId) {
+      const membership = await prisma.membership.findUnique({
+        where: {
+          userId_workspaceId: {
+            userId,
+            workspaceId: repo.workspaceId,
+          },
+        },
+      });
+      if (!membership) {
+        return res.status(403).json({ success: false, error: "Access denied" });
+      }
     }
 
     const metrics = await getHealthMetrics(scope);

@@ -47,3 +47,22 @@ export const protect = (req: Request, res: Response, next: NextFunction) => {
     });
   }
 };
+
+export const optionalProtect = (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.split(" ")[1];
+      const jwtSecret = process.env.JWT_SECRET;
+      if (token && jwtSecret) {
+        const decoded = jwt.verify(token, jwtSecret);
+        if (typeof decoded === "object" && decoded !== null && typeof (decoded as { id?: number }).id === "number") {
+          req.user = { id: (decoded as { id: number }).id };
+        }
+      }
+    }
+  } catch (error) {
+    // Ignore error and proceed without req.user
+  }
+  next();
+};

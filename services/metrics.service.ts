@@ -184,14 +184,54 @@ export const getRecentActivity = async (scope: MetricsScope) => {
   });
 };
 
+export const getActivityHistory = async (scope: MetricsScope) => {
+  const baseWhere = buildWhereClause(scope);
+  
+  const prs = await prisma.pullRequest.findMany({
+    where: {
+      ...baseWhere,
+      state: "merged",
+      mergedAt: { gte: scope.cutoffDate },
+    },
+    select: {
+      mergedAt: true,
+    },
+  });
+
+  const dailyCounts: Record<string, number> = {};
+  
+  // Initialize all dates in the range with 0
+  const days = scope.windowDays;
+  for (let i = 0; i <= days; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().split('T')[0];
+    dailyCounts[dateStr] = 0;
+  }
+
+  prs.forEach(pr => {
+    if (pr.mergedAt) {
+      const dateStr = pr.mergedAt.toISOString().split('T')[0];
+      if (dailyCounts[dateStr] !== undefined) {
+        dailyCounts[dateStr]++;
+      }
+    }
+  });
+
+  return Object.entries(dailyCounts)
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+};
+
 export const getHealthMetrics = async (scope: MetricsScope) => {
-  const [cycleTime, throughput, stalePrs, activeDevs, topContributors, recentActivity] = await Promise.all([
+  const [cycleTime, throughput, stalePrs, activeDevs, topContributors, recentActivity, activityHistory] = await Promise.all([
     getCycleTimeMetrics(scope),
     getThroughputMetrics(scope),
     getStalePRs(scope),
     getActiveDevelopers(scope),
     getTopContributors(scope),
     getRecentActivity(scope),
+    getActivityHistory(scope),
   ]);
 
   return {
@@ -201,6 +241,7 @@ export const getHealthMetrics = async (scope: MetricsScope) => {
     activeDevs,
     topContributors,
     recentActivity,
+    activityHistory,
   };
 };
 
