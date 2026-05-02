@@ -1,5 +1,4 @@
 import { Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
 import { syncRepoCommitsById } from "../../services/repo.service";
 import { prisma } from "../../prisma";
 
@@ -28,6 +27,7 @@ export const connectRepo = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
     const { workspaceId, owner, repo } = req.body;
+    console.log("[connectRepo] request body:", req.body);
 
     if (!userId) {
       return res.status(401).json({
@@ -36,7 +36,7 @@ export const connectRepo = async (req: Request, res: Response) => {
       });
     }
 
-    if (!workspaceId || !owner || !repo) {
+    if (workspaceId === undefined || !owner || !repo) {
       return res.status(400).json({
         success: false,
         message: "workspaceId, owner and repo are required",
@@ -44,12 +44,23 @@ export const connectRepo = async (req: Request, res: Response) => {
     }
 
     const numericWorkspaceId = Number(workspaceId);
+    console.log("[connectRepo] parsed workspaceId:", numericWorkspaceId);
     if (Number.isNaN(numericWorkspaceId)) {
       return res.status(400).json({
         success: false,
         message: "workspaceId must be a valid number",
       });
     }
+
+    if (typeof owner !== "string" || typeof repo !== "string" || !owner.trim() || !repo.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "owner and repo must be non-empty strings",
+      });
+    }
+
+    const normalizedOwner = owner.trim();
+    const normalizedRepo = repo.trim();
 
     const membership = await prisma.membership.findUnique({
       where: {
@@ -78,8 +89,8 @@ export const connectRepo = async (req: Request, res: Response) => {
       where: {
         owner_name_workspaceId: {
           workspaceId: numericWorkspaceId,
-          owner,
-          name: repo,
+          owner: normalizedOwner,
+          name: normalizedRepo,
         },
       },
     });
@@ -91,7 +102,14 @@ export const connectRepo = async (req: Request, res: Response) => {
       });
     }
 
-    const githubResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`);
+    const githubUrl = `https://api.github.com/repos/${normalizedOwner}/${normalizedRepo}`;
+    const githubResponse = await fetch(githubUrl, {
+      headers: {
+        "User-Agent": "Pulseboard",
+        Accept: "application/vnd.github+json",
+      },
+    });
+    console.log("[connectRepo] GitHub response status:", githubResponse.status);
     if (githubResponse.status === 404) {
       return res.status(404).json({
         success: false,
@@ -100,6 +118,12 @@ export const connectRepo = async (req: Request, res: Response) => {
     }
 
     if (!githubResponse.ok) {
+      const errorText = await githubResponse.text();
+      console.error("[connectRepo] GitHub fetch failed", {
+        status: githubResponse.status,
+        body: errorText,
+        url: githubUrl,
+      });
       return res.status(500).json({
         success: false,
         message: "Failed to fetch repository from GitHub",

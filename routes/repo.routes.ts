@@ -10,6 +10,11 @@ import { protect } from "../middlewares/auth.middleware";
 
 const router = Router();
 
+router.get("/", (_req, res) => {
+  res.json({ message: "Repo route working" });
+});
+
+router.post("/", protect, connectRepo);
 router.post("/connect", protect, connectRepo);
 router.post("/:id/sync-commits", protect, syncCommits);
 router.get("/:id/commits", protect, getRepoCommits);
