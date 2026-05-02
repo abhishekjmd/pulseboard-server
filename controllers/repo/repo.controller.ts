@@ -113,20 +113,39 @@ export const connectRepo = async (req: Request, res: Response) => {
     if (githubResponse.status === 404) {
       return res.status(404).json({
         success: false,
-        message: "Repository not found",
+        message: "Repository not found on GitHub",
       });
     }
 
     if (!githubResponse.ok) {
       const errorText = await githubResponse.text();
+      let githubMessage = "Unknown GitHub error";
+
+      try {
+        const parsed = JSON.parse(errorText) as { message?: string };
+        githubMessage = parsed.message ?? githubMessage;
+      } catch {
+        if (errorText.trim()) {
+          githubMessage = errorText.trim();
+        }
+      }
+
       console.error("[connectRepo] GitHub fetch failed", {
         status: githubResponse.status,
         body: errorText,
         url: githubUrl,
       });
-      return res.status(500).json({
+
+      if (githubResponse.status === 401 || githubResponse.status === 403 || githubResponse.status === 429) {
+        return res.status(502).json({
+          success: false,
+          message: `GitHub API unavailable: ${githubMessage}`,
+        });
+      }
+
+      return res.status(502).json({
         success: false,
-        message: "Failed to fetch repository from GitHub",
+        message: `GitHub API error (${githubResponse.status}): ${githubMessage}`,
       });
     }
 
