@@ -329,19 +329,33 @@ export const getRepoContributions = async (req: Request, res: Response) => {
     oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
     oneYearAgo.setHours(0, 0, 0, 0);
 
+    // Pre-populate with 0s for all 365+ days to ensure full coverage
+    const contributions: Record<string, number> = {};
+    const iter = new Date(oneYearAgo);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    while (iter <= today) {
+      const dStr = iter.toISOString().split('T')[0];
+      contributions[dStr] = 0;
+      iter.setDate(iter.getDate() + 1);
+    }
+
     const commits = await prisma.commit.findMany({
       where: {
         repositoryId: repo.id,
         date: { gte: oneYearAgo },
       },
       select: { date: true },
+      orderBy: { date: 'asc' }
     });
 
-    const contributions = commits.reduce((acc: Record<string, number>, commit) => {
+    commits.forEach((commit) => {
       const dateStr = commit.date.toISOString().split('T')[0];
-      acc[dateStr] = (acc[dateStr] || 0) + 1;
-      return acc;
-    }, {});
+      if (contributions[dateStr] !== undefined) {
+        contributions[dateStr]++;
+      }
+    });
 
     return res.status(200).json({ success: true, contributions });
   } catch (error) {
