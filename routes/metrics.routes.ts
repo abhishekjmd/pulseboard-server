@@ -27,6 +27,23 @@ const getMetricsScope = (req: Request): MetricsScope => {
   };
 };
 
+const formatHealthData = (metrics: any) => ({
+  metrics: {
+    avgCycleTimeHours: metrics.cycleTime.averageHours,
+    prThroughput: metrics.throughput.count,
+    stalePrsCount: metrics.stalePrs.count,
+    velocityIndex: metrics.activeDevs.count,
+  },
+  trends: {
+    cycleTimeTrend: metrics.cycleTime.change,
+    throughputTrend: metrics.throughput.change,
+    staleTrend: metrics.stalePrs.change,
+    velocityTrend: metrics.activeDevs.change,
+  },
+  activities: metrics.recentActivity,
+  topContributors: metrics.topContributors,
+});
+
 router.get(
   "/repos/:id/health",
   protect,
@@ -47,7 +64,7 @@ router.get(
 
     res.json({
       success: true,
-      data: metrics,
+      data: formatHealthData(metrics),
     });
   })
 );
@@ -72,7 +89,7 @@ router.get(
 
     res.json({
       success: true,
-      data: metrics,
+      data: formatHealthData(metrics),
     });
   })
 );
