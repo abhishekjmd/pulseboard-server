@@ -89,6 +89,17 @@ export const getOpenPRs = async (scope: MetricsScope) => {
   return { count };
 };
 
+export const getClosedPRs = async (scope: MetricsScope) => {
+  const baseWhere = buildWhereClause(scope);
+  const count = await prisma.pullRequest.count({
+    where: {
+      ...baseWhere,
+      state: "closed",
+    },
+  });
+  return { count };
+};
+
 export const getStalePRs = async (scope: MetricsScope, staleDays = 7) => {
   const baseWhere = buildWhereClause(scope);
   const now = new Date();
@@ -246,16 +257,61 @@ export const getActivityHistory = async (scope: MetricsScope) => {
     .sort((a, b) => a.date.localeCompare(b.date));
 };
 
+export const getActionablePRs = async (scope: MetricsScope) => {
+  const baseWhere = buildWhereClause(scope);
+  return prisma.pullRequest.findMany({
+    where: {
+      ...baseWhere,
+      state: "open",
+    },
+    select: {
+      id: true,
+      number: true,
+      title: true,
+      authorName: true,
+      createdAt: true,
+      updatedAt: true,
+      state: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+};
+
+export const getMergedPRsList = async (scope: MetricsScope) => {
+  const baseWhere = buildWhereClause(scope);
+  return prisma.pullRequest.findMany({
+    where: {
+      ...baseWhere,
+      state: "merged",
+      mergedAt: { gte: scope.cutoffDate },
+    },
+    select: {
+      id: true,
+      number: true,
+      title: true,
+      authorName: true,
+      createdAt: true,
+      mergedAt: true,
+      state: true,
+    },
+    orderBy: { mergedAt: 'desc' },
+    take: 50,
+  });
+};
+
 export const getHealthMetrics = async (scope: MetricsScope) => {
-  const [cycleTime, throughput, stalePrs, openPrs, activeDevs, topContributors, recentActivity, activityHistory] = await Promise.all([
+  const [cycleTime, throughput, stalePrs, openPrs, closedPrs, activeDevs, topContributors, recentActivity, activityHistory, actionablePrs, mergedPrsList] = await Promise.all([
     getCycleTimeMetrics(scope),
     getThroughputMetrics(scope),
     getStalePRs(scope),
     getOpenPRs(scope),
+    getClosedPRs(scope),
     getActiveDevelopers(scope),
     getTopContributors(scope),
     getRecentActivity(scope),
     getActivityHistory(scope),
+    getActionablePRs(scope),
+    getMergedPRsList(scope),
   ]);
 
   return {
@@ -263,9 +319,12 @@ export const getHealthMetrics = async (scope: MetricsScope) => {
     throughput,
     stalePrs,
     openPrs,
+    closedPrs,
     activeDevs,
     topContributors,
     recentActivity,
     activityHistory,
+    actionablePrs,
+    mergedPrsList,
   };
 };

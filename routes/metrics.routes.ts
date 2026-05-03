@@ -33,6 +33,7 @@ const formatHealthData = (metrics: any) => ({
     prThroughput: metrics.throughput.count,
     stalePrsCount: metrics.stalePrs.count,
     openPrsCount: metrics.openPrs.count,
+    closedPrsCount: metrics.closedPrs.count,
     velocityIndex: metrics.activeDevs.count,
   },
   trends: {
@@ -61,6 +62,8 @@ const formatHealthData = (metrics: any) => ({
     }),
     topContributors: metrics.topContributors,
     activityHistory: metrics.activityHistory,
+    actionablePrs: metrics.actionablePrs,
+    mergedPrsList: metrics.mergedPrsList,
 });
 
 router.get(
