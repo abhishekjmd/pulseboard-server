@@ -10,7 +10,7 @@ export const syncRepoCommitsById = async (repoId: number) => {
   }
 
   const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     Accept: "application/vnd.github.v3+json",
     "User-Agent": "pulseboard-app",
   };
@@ -28,7 +28,13 @@ export const syncRepoCommitsById = async (repoId: number) => {
 
   while (hasMore) {
     const url = `https://api.github.com/repos/${repo.owner}/${repo.name}/commits?per_page=${perPage}&page=${page}`;
-    const githubResponse = await fetch(url, { headers });
+    let githubResponse = await fetch(url, { headers });
+
+    if (githubResponse.status === 401 && headers.Authorization) {
+      console.warn(`[COMMIT SYNC] GitHub GITHUB_TOKEN authentication failed (401) for ${repo.owner}/${repo.name}. Retrying without token...`);
+      delete headers.Authorization;
+      githubResponse = await fetch(url, { headers });
+    }
 
     if (!githubResponse.ok) {
       const errorText = await githubResponse.text();

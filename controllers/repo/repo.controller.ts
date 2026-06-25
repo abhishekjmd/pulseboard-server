@@ -100,15 +100,28 @@ export const connectRepo = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: "Repository already connected" });
     }
 
-    const githubResponse = await fetch(
+    const headers: Record<string, string> = {
+      Accept: "application/vnd.github.v3+json",
+      "User-Agent": "pulseboard-app",
+    };
+
+    if (process.env.GITHUB_TOKEN) {
+      headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+    }
+
+    let githubResponse = await fetch(
       `https://api.github.com/repos/${normalizedOwner}/${normalizedRepo}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-          "User-Agent": "pulseboard-app",
-        },
-      }
+      { headers }
     );
+
+    if (githubResponse.status === 401 && headers.Authorization) {
+      console.warn(`[REPO CONNECT] GitHub GITHUB_TOKEN authentication failed (401) for ${normalizedOwner}/${normalizedRepo}. Retrying without token...`);
+      delete headers.Authorization;
+      githubResponse = await fetch(
+        `https://api.github.com/repos/${normalizedOwner}/${normalizedRepo}`,
+        { headers }
+      );
+    }
 
     if (!githubResponse.ok) {
       return res.status(githubResponse.status).json({ success: false, message: "GitHub API error" });

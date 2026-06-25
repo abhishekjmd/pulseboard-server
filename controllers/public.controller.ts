@@ -91,7 +91,7 @@ export const analyzePublicRepo = async (req: Request, res: Response) => {
       });
     }
 
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
       Accept: "application/vnd.github.v3+json",
       "User-Agent": "pulseboard-app",
     };
@@ -100,9 +100,17 @@ export const analyzePublicRepo = async (req: Request, res: Response) => {
       headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
     }
 
-    const githubResponse = await fetch(`https://api.github.com/repos/${owner}/${name}`, {
+    let githubResponse = await fetch(`https://api.github.com/repos/${owner}/${name}`, {
       headers,
     });
+
+    if (githubResponse.status === 401 && headers.Authorization) {
+      console.warn(`[PUBLIC ANALYZE] GitHub GITHUB_TOKEN authentication failed (401) for ${owner}/${name}. Retrying without token...`);
+      delete headers.Authorization;
+      githubResponse = await fetch(`https://api.github.com/repos/${owner}/${name}`, {
+        headers,
+      });
+    }
 
     if (!githubResponse.ok) {
       const errorText = await githubResponse.text();
