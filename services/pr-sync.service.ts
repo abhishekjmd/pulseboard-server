@@ -10,7 +10,7 @@ export const syncRepoPRsById = async (repoId: number) => {
   }
 
   const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     Accept: "application/vnd.github.v3+json",
     "User-Agent": "pulseboard-app",
   };
@@ -31,8 +31,14 @@ export const syncRepoPRsById = async (repoId: number) => {
     const url = `https://api.github.com/repos/${repo.owner}/${repo.name}/pulls?state=all&sort=updated&direction=desc&per_page=${perPage}&page=${page}`;
     
     console.log(`[PR SYNC] Fetching page ${page}...`);
-    const response = await fetch(url, { headers });
+    let response = await fetch(url, { headers });
     
+    if (response.status === 401 && headers.Authorization) {
+      console.warn(`[PR SYNC] GitHub GITHUB_TOKEN authentication failed (401) for ${repo.owner}/${repo.name}. Retrying without token...`);
+      delete headers.Authorization;
+      response = await fetch(url, { headers });
+    }
+
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`[PR SYNC] GitHub API Error (Page ${page}): ${response.status} - ${errorText}`);
