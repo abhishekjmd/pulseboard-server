@@ -6,12 +6,17 @@ const errorHandler = (
   res: Response,
   next: NextFunction,
 ) => {
-    console.error(err.stack);
-    const statusCode = res.statusCode === 200 ? res.statusCode : 500;
-    res.status(statusCode).json({
-        success: false,
-        message: err.message || "Internal Server Error",
-    })
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  console.error(err.stack || err.message);
+
+  const statusCode = res.statusCode >= 400 ? res.statusCode : 500;
+  res.status(statusCode).json({
+    success: false,
+    message: err.message || "Internal Server Error",
+  });
 };
 
 export default errorHandler;

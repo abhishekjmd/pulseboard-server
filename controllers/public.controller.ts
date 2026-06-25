@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { prisma } from "../prisma";
+import { isDatabaseConnectionError, prisma } from "../prisma";
 import { syncRepoCommitsById } from "../services/repo.service";
 import { syncRepoPRsById } from "../services/pr-sync.service";
 
@@ -105,6 +105,14 @@ export const analyzePublicRepo = async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error("[analyzePublicRepo] Error:", error);
+
+    if (isDatabaseConnectionError(error)) {
+      return res.status(503).json({
+        success: false,
+        message: "Database connection unavailable. Please check DATABASE_URL and database availability.",
+      });
+    }
+
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 };

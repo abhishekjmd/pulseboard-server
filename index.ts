@@ -43,12 +43,16 @@ app.use("/api/public", publicRoutes);
 
 app.use(errorHandler);
 
-startRepoSyncJob();
+if (process.env.ENABLE_REPO_SYNC === "true") {
+  startRepoSyncJob();
 
-setTimeout(() => {
-  console.log("[INIT] Running initial sync...");
-  runRepoSyncBatch().catch((err) => console.error("[INIT SYNC ERROR]", err));
-}, 5000);
+  setTimeout(() => {
+    console.log("[INIT] Running initial sync...");
+    runRepoSyncBatch().catch((err) => console.error("[INIT SYNC ERROR]", err));
+  }, 5000);
+} else {
+  console.log("[SYNC] Repository sync job disabled. Set ENABLE_REPO_SYNC=true to enable it.");
+}
 
 const PORT = process.env.PORT || 5000;
 
