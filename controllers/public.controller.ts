@@ -17,8 +17,32 @@ export const analyzePublicRepo = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: "Invalid GitHub URL format" });
     }
 
-    const owner = match[1];
-    const name = match[2].replace(/\.git$/, "");
+    const urlString = String(url).trim();
+    let owner: string;
+    let name: string;
+
+    try {
+      const parsedUrl = new URL(urlString);
+      if (!["github.com", "www.github.com"].includes(parsedUrl.hostname.toLowerCase())) {
+        return res.status(400).json({ success: false, message: "Invalid GitHub URL format" });
+      }
+
+      const pathParts = parsedUrl.pathname.split("/").filter(Boolean);
+      if (pathParts.length < 2) {
+        return res.status(400).json({ success: false, message: "Invalid GitHub URL format" });
+      }
+
+      owner = pathParts[0];
+      name = pathParts[1].replace(/\.git$/, "");
+    } catch {
+      const fallbackMatch = urlString.match(/github\.com[:/]+([^/]+)\/([^/]+)(?:\.git)?/);
+      if (!fallbackMatch) {
+        return res.status(400).json({ success: false, message: "Invalid GitHub URL format" });
+      }
+
+      owner = fallbackMatch[1];
+      name = fallbackMatch[2].replace(/\.git$/, "");
+    }
 
     // 1. Check if repo exists (globally unique owner/name)
     let repo = await prisma.repository.findUnique({
@@ -67,18 +91,36 @@ export const analyzePublicRepo = async (req: Request, res: Response) => {
       });
     }
 
-    const githubResponse = await fetch(
-      `https://api.github.com/repos/${owner}/${name}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-          "User-Agent": "pulseboard-app",
-        },
-      }
-    );
+    const headers: HeadersInit = {
+      Accept: "application/vnd.github.v3+json",
+      "User-Agent": "pulseboard-app",
+    };
+
+    if (process.env.GITHUB_TOKEN) {
+      headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+    }
+
+    const githubResponse = await fetch(`https://api.github.com/repos/${owner}/${name}`, {
+      headers,
+    });
 
     if (!githubResponse.ok) {
-      return res.status(404).json({ success: false, message: "Repository not found on GitHub" });
+      const errorText = await githubResponse.text();
+      console.error(`[PUBLIC ANALYZE] GitHub repo check failed for ${owner}/${name}: ${githubResponse.status} ${errorText}`);
+
+      if (githubResponse.status === 404) {
+        return res.status(404).json({ success: false, message: "Repository not found on GitHub" });
+      }
+
+      if (githubResponse.status === 401) {
+        return res.status(502).json({ success: false, message: "GitHub authentication failed. Check GITHUB_TOKEN." });
+      }
+
+      if (githubResponse.status === 403) {
+        return res.status(502).json({ success: false, message: "GitHub API access denied or rate limited. Try again later." });
+      }
+
+      return res.status(502).json({ success: false, message: "Unable to verify repository on GitHub." });
     }
 
     const githubData = await githubResponse.json();
