@@ -53,6 +53,28 @@ export const getRepoById = async (req: Request, res: Response) => {
   }
 };
 
+export const getRepoSyncStatus = async (req: Request, res: Response) => {
+  try {
+    const repoId = Number(req.params.id);
+    const repo = await prisma.repository.findUnique({ where: { id: repoId }, include: { workspace: true } });
+    if (!repo) return res.status(404).json({ success: false, message: "Repository not found" });
+
+    const isPublic = repo.workspace.name === "Public Sandbox";
+    const userId = req.user?.id;
+    if (!isPublic) {
+      if (!userId) return res.status(401).json({ success: false, message: "Unauthorized" });
+      const { isAuthorized } = await getAuthorizedRepoForUser(userId, repoId);
+      if (!isAuthorized) return res.status(403).json({ success: false, message: "Access denied" });
+    }
+
+    const syncStatus = repo.lastPrSyncAt ? "ready" : "processing";
+    // For now, lastPrSyncAt is used as last completed time.
+    return res.status(200).json({ success: true, data: { syncStatus, lastSyncCompletedAt: repo.lastPrSyncAt || null, lastSyncStartedAt: null, lastSyncError: null } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
 export const connectRepo = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
@@ -137,6 +159,102 @@ export const connectRepo = async (req: Request, res: Response) => {
         workspaceId: numericWorkspaceId,
       },
     });
+
+    return res.status(201).json({ success: true, message: "Repository connected", repository: newRepo });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+export const connectRepoFromGithub = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const { workspaceId, githubId } = req.body;
+
+    if (!userId) return res.status(401).json({ success: false, message: "Unauthorized" });
+    if (workspaceId === undefined || !githubId) return res.status(400).json({ success: false, message: "workspaceId and githubId are required" });
+
+    const numericWorkspaceId = Number(workspaceId);
+    if (Number.isNaN(numericWorkspaceId)) return res.status(400).json({ success: false, message: "workspaceId must be a valid number" });
+
+    const membership = await prisma.membership.findUnique({ where: { userId_workspaceId: { userId, workspaceId: numericWorkspaceId } } });
+    if (!membership || membership.role !== "admin") return res.status(403).json({ success: false, message: "only admins can connect repos" });
+
+    // Retrieve GitHubConnection for the user
+    const connection = await prisma.gitHubConnection.findUnique({ where: { userId } });
+    if (!connection) return res.status(403).json({ success: false, message: "Connect GitHub first" });
+
+    // Decrypt token
+    const { decryptToken } = await import("../../utils/tokenCrypto");
+    let token: string;
+    try {
+      token = decryptToken(connection.encryptedAccessToken);
+    } catch (err) {
+      return res.status(500).json({ success: false, message: "Server configuration error" });
+    }
+
+    // Fetch repository by githubId
+    const repoUrl = `https://api.github.com/repositories/${encodeURIComponent(githubId)}`;
+    const headers: Record<string, string> = { Accept: "application/vnd.github.v3+json", Authorization: `Bearer ${token}`, "User-Agent": "pulseboard-app" };
+
+    const githubResponse = await fetch(repoUrl, { headers });
+    if (githubResponse.status === 401) return res.status(401).json({ success: false, message: "GitHub authorization invalid, please reconnect" });
+    if (!githubResponse.ok) return res.status(githubResponse.status).json({ success: false, message: "GitHub API error" });
+
+    const data = await githubResponse.json();
+    const owner = data.owner?.login;
+    const name = data.name;
+    const ghId = String(data.id);
+
+    if (!owner || !name || !ghId) return res.status(500).json({ success: false, message: "Invalid GitHub response" });
+
+    // Check existing repository by owner+name (schema unique)
+    const existingRepo = await prisma.repository.findUnique({ where: { owner_name: { owner, name } } });
+    if (existingRepo) {
+      if (existingRepo.workspaceId === numericWorkspaceId) {
+        return res.status(409).json({ success: false, message: "Repository already connected to this workspace" });
+      }
+      return res.status(409).json({ success: false, message: "Repository already connected to another workspace" });
+    }
+
+    const newRepo = await prisma.repository.create({ data: { name, owner, githubId: ghId, workspaceId: numericWorkspaceId } });
+
+    // Start an initial PR sync in the background using the user's GitHub token.
+    // Do NOT fall back to the server token here — if the user's token is not available
+    // or decryption fails, log and do not start the sync so the frontend can surface a failure.
+    (async () => {
+      try {
+        if (!connection || !connection.encryptedAccessToken) {
+          console.warn(`[PR SYNC] No GitHubConnection token for user ${userId}; initial sync not started for ${owner}/${name}`);
+          return;
+        }
+
+        let userToken: string | undefined = undefined;
+        try {
+          userToken = decryptToken(connection.encryptedAccessToken);
+        } catch (err) {
+          console.error(`[PR SYNC] Failed to decrypt GitHub token for user ${userId}; initial sync not started for ${owner}/${name}`);
+          return;
+        }
+
+        console.log(`[PR SYNC] Initiating async initial sync for ${owner}/${name} (repoId=${newRepo.id})`);
+        void syncRepoPRsById(newRepo.id, userToken).catch((err) => {
+          console.error(`[PR SYNC] Async initial PR sync failed for ${owner}/${name}:`, err?.message || err);
+        });
+
+        // Also start an initial commit sync using the same user token.
+        // Don't fall back to server token here for private repos — require the user's token.
+        try {
+          void syncRepoCommitsById(newRepo.id, userToken).catch((err) => {
+            console.error(`[COMMIT SYNC] Async initial commit sync failed for ${owner}/${name}:`, err?.message || err);
+          });
+        } catch (err) {
+          console.error(`[COMMIT SYNC] Error while starting commit sync for ${owner}/${name}:`, err?.message || err);
+        }
+      } catch (err) {
+        console.error("[PR SYNC] Error while attempting to start initial sync:", err?.message || err);
+      }
+    })();
 
     return res.status(201).json({ success: true, message: "Repository connected", repository: newRepo });
   } catch (error) {
@@ -312,7 +430,27 @@ export const syncPullRequests = async (req: Request, res: Response) => {
       if (!isAuthorized) return res.status(403).json({ success: false, message: "Access denied" });
     }
 
-    const count = await syncRepoPRsById(repo.id);
+    // Attempt to use the requesting user's GitHubConnection access token if available.
+    let tokenToUse: string | undefined = undefined;
+    try {
+      const userIdReq = req.user?.id;
+      if (userIdReq) {
+        const connection = await prisma.gitHubConnection.findUnique({ where: { userId: userIdReq } });
+        if (connection && connection.encryptedAccessToken) {
+          const { decryptToken } = await import("../../utils/tokenCrypto");
+          try {
+            tokenToUse = decryptToken(connection.encryptedAccessToken);
+          } catch (err) {
+            console.warn("[PR SYNC] Failed to decrypt user GitHub token; falling back to server token");
+            tokenToUse = undefined;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[PR SYNC] Error while retrieving user GitHubConnection:", err?.message || err);
+    }
+
+    const count = await syncRepoPRsById(repo.id, tokenToUse);
     return res.status(200).json({ success: true, message: "PRs synced", count });
   } catch (error) {
     return res.status(500).json({ success: false, message: "Internal server error" });

@@ -1,0 +1,46 @@
+# Version control & IDE artifacts
+.git
+.gitignore
+.github
+
+# Environment files — NEVER ship secrets inside the image
+.env
+.env.*
+*.env
+
+# Development configuration not needed at runtime
+nodemon.json
+
+# Local development data and logs
+pgdata/
+*.log
+scratch/
+
+# Test and CI artifacts
+*.test.ts
+*.spec.ts
+coverage/
+.nyc_output/
+jest.config.*
+
+# Build artifacts (the runtime stage copies from builder explicitly)
+dist/
+
+# Dependencies — reinstalled from package-lock.json inside the image
+node_modules/
+
+# Editors and OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker files themselves (not needed in the build context)
+Dockerfile
+.dockerignore
+
+# Documentation
+README.md
+*.md

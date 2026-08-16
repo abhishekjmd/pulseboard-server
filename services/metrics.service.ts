@@ -145,52 +145,150 @@ export const getStalePRs = async (scope: MetricsScope, staleDays = 7) => {
 export const getActiveDevelopers = async (scope: MetricsScope) => {
   const baseWhere = buildWhereClause(scope);
   const { now, currentCutoff, previousCutoff } = getWindows(scope);
+  // Prefer PR-based velocity when merged PR data exists for the repository/workspace.
+  const totalMergedPRs = await prisma.pullRequest.count({ where: { ...baseWhere, state: 'merged' } });
 
-  const fetchDevCount = async (start: Date, end: Date) => {
-    const devs = await prisma.pullRequest.groupBy({
-      by: ['authorName'],
-      where: {
-        ...baseWhere,
-        state: "merged",
-        mergedAt: { gte: start, lte: end },
-      },
-    });
-    return devs.length;
-  };
+  if (totalMergedPRs > 0) {
+    const fetchDevCount = async (start: Date, end: Date) => {
+      const devs = await prisma.pullRequest.groupBy({
+        by: ['authorName'],
+        where: {
+          ...baseWhere,
+          state: "merged",
+          mergedAt: { gte: start, lte: end },
+        },
+      });
+      return devs.length;
+    };
 
-  const currentCount = await fetchDevCount(currentCutoff, now);
-  const previousCount = await fetchDevCount(previousCutoff, currentCutoff);
+    const currentCount = await fetchDevCount(currentCutoff, now);
+    const previousCount = await fetchDevCount(previousCutoff, currentCutoff);
+
+    return {
+      count: currentCount,
+      change: calculateChange(currentCount, previousCount),
+      source: 'pr',
+    } as any;
+  }
+
+  // Fallback: compute unique commit authors in the period
+  const commitGroups = await prisma.commit.groupBy({
+    by: ['authorName'],
+    where: {
+      ...baseWhere,
+      date: { gte: currentCutoff, lte: now },
+    },
+  });
+  const prevCommitGroups = await prisma.commit.groupBy({
+    by: ['authorName'],
+    where: {
+      ...baseWhere,
+      date: { gte: previousCutoff, lte: currentCutoff },
+    },
+  });
+
+  const currentCount = commitGroups.length;
+  const previousCount = prevCommitGroups.length;
 
   return {
     count: currentCount,
     change: calculateChange(currentCount, previousCount),
+    source: 'commit',
+  } as any;
+};
+
+export const getCommitActivityMetrics = async (scope: MetricsScope) => {
+  const baseWhere = buildWhereClause(scope);
+  const now = new Date();
+  const cutoff = scope.cutoffDate;
+
+  const totalCommits = await prisma.commit.count({ where: { ...baseWhere, date: { gte: cutoff } } });
+
+  const authorGroups = await prisma.commit.groupBy({
+    by: ['authorName'],
+    where: { ...baseWhere, date: { gte: cutoff } },
+    _count: { authorName: true },
+    orderBy: { _count: { authorName: 'desc' } },
+    take: 5,
+  });
+
+  const topCommitters = authorGroups.map(g => ({ name: g.authorName, count: g._count.authorName }));
+
+  const uniqueAuthorsGroups = await prisma.commit.groupBy({ by: ['authorName'], where: { ...baseWhere, date: { gte: cutoff } } });
+  const uniqueAuthors = uniqueAuthorsGroups.length;
+
+  // Build daily activity for the window
+  const days = scope.windowDays;
+  const dailyCounts: Record<string, number> = {};
+  for (let i = 0; i <= days; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().split('T')[0];
+    dailyCounts[dateStr] = 0;
+  }
+
+  const commits = await prisma.commit.findMany({ where: { ...baseWhere, date: { gte: cutoff } }, select: { date: true } });
+  commits.forEach(c => {
+    const dateStr = c.date.toISOString().split('T')[0];
+    if (dailyCounts[dateStr] !== undefined) dailyCounts[dateStr]++;
+  });
+
+  const activityHistory = Object.entries(dailyCounts).map(([date, count]) => ({ date, count })).sort((a, b) => a.date.localeCompare(b.date));
+
+  return {
+    totalCommits,
+    uniqueAuthors,
+    topCommitters,
+    activityHistory,
   };
 };
 
 export const getTopContributors = async (scope: MetricsScope) => {
   const baseWhere = buildWhereClause(scope);
-  
-  const contributors = await prisma.pullRequest.groupBy({
+  // If merged PRs exist in this scope, prefer PR-based contributors
+  const mergedCount = await prisma.pullRequest.count({ where: { ...baseWhere, state: 'merged', mergedAt: { gte: scope.cutoffDate } } });
+  if (mergedCount > 0) {
+    const contributors = await prisma.pullRequest.groupBy({
+      by: ['authorName'],
+      where: {
+        ...baseWhere,
+        state: "merged",
+        mergedAt: { gte: scope.cutoffDate },
+      },
+      _count: {
+        _all: true,
+      },
+      orderBy: {
+        _count: {
+          authorName: 'desc',
+        },
+      },
+      take: 5,
+    });
+
+    return contributors.map(c => ({
+      name: c.authorName,
+      count: c._count._all,
+      source: 'pr',
+    }));
+  }
+
+  // Fallback to commit authors
+  const commitGroups = await prisma.commit.groupBy({
     by: ['authorName'],
     where: {
       ...baseWhere,
-      state: "merged",
-      mergedAt: { gte: scope.cutoffDate },
+      date: { gte: scope.cutoffDate },
     },
-    _count: {
-      _all: true,
-    },
-    orderBy: {
-      _count: {
-        authorName: 'desc',
-      },
-    },
+    _count: { authorName: true },
+    orderBy: { _count: { authorName: 'desc' } },
     take: 5,
   });
 
-  return contributors.map(c => ({
+  return commitGroups.map(c => ({
     name: c.authorName,
-    count: c._count._all,
+    count: c._count.authorName,
+    source: 'commit',
   }));
 };
 

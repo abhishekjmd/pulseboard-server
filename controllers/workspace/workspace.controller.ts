@@ -13,8 +13,14 @@ export const createWorkspace = async (
     const userId = req.user?.id;
     if (!userId)
       return res.status(401).json({ success: false, message: "Unauthorized" });
+    if (typeof name !== "string" || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Workspace name is required",
+      });
+    }
     const workspace = await prisma.$transaction(async (tx) => {
-      const newWorkspace = await tx.workspace.create({ data: { name } });
+      const newWorkspace = await tx.workspace.create({ data: { name: name.trim() } });
       const membership = await tx.membership.create({
         data: {
           userId,
@@ -48,6 +54,11 @@ export const getWorkspaces = async (
     }
 
     const workspaces = await prisma.workspace.findMany({
+      where: {
+        memberships: {
+          some: { userId },
+        },
+      },
       include: {
         memberships: {
           include: { user: { select: { id: true, name: true, email: true } } },
@@ -212,13 +223,60 @@ export const getWorkspaceRepos = async (
       });
     }
 
-    const repos = await prisma.repository.findMany({
+    const reposWithDetails = await prisma.repository.findMany({
       where: { workspaceId },
-      select: {
-        id: true,
-        name: true,
-        owner: true,
+      include: {
+        _count: {
+          select: {
+            commits: true,
+            pullRequests: true,
+          },
+        },
+        pullRequests: {
+          select: {
+            id: true,
+            state: true,
+            createdAt: true,
+          },
+        },
+        commits: {
+          select: {
+            authorName: true,
+            date: true,
+          },
+        },
       },
+    });
+
+    const now = Date.now();
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+
+    const repos = reposWithDetails.map((repo) => {
+      const commitCount = repo._count.commits;
+      const prCount = repo._count.pullRequests;
+      const uniqueAuthors = new Set(repo.commits.map((c) => c.authorName.toLowerCase())).size;
+      const stalePrCount = repo.pullRequests.filter(
+        (pr) => pr.state === "open" && now - new Date(pr.createdAt).getTime() > sevenDaysMs
+      ).length;
+
+      const lastCommitTime = repo.commits.length
+        ? Math.max(...repo.commits.map((c) => new Date(c.date).getTime()))
+        : null;
+      const lastPrTime = repo.lastPrSyncAt ? new Date(repo.lastPrSyncAt).getTime() : null;
+      const lastUpdatedMs = Math.max(lastCommitTime || 0, lastPrTime || 0);
+      const updatedAt = lastUpdatedMs > 0 ? new Date(lastUpdatedMs).toISOString() : null;
+
+      return {
+        id: repo.id,
+        name: repo.name,
+        owner: repo.owner,
+        lastPrSyncAt: repo.lastPrSyncAt ? repo.lastPrSyncAt.toISOString() : null,
+        updatedAt,
+        commitCount,
+        contributorCount: uniqueAuthors,
+        prCount,
+        stalePrCount,
+      };
     });
 
     return res.status(200).json({
