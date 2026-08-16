@@ -2,14 +2,71 @@ import cron from "node-cron";
 import { getAllRepositories, syncRepoCommitsById } from "../services/repo.service";
 import { syncRepoPRsById } from "../services/pr-sync.service";
 
+import { prisma } from "../prisma";
+import { decryptToken } from "../utils/tokenCrypto";
+
 let isRunning = false;
 
+export const resolveAccessTokenForRepo = async (repoId: number): Promise<string | undefined> => {
+  try {
+    const repo = await prisma.repository.findUnique({
+      where: { id: repoId },
+      select: {
+        workspace: {
+          select: {
+            memberships: {
+              select: {
+                role: true,
+                user: {
+                  select: {
+                    githubConnection: {
+                      select: {
+                        encryptedAccessToken: true,
+                      },
+                    },
+                  },
+                },
+              },
+              orderBy: {
+                role: "asc", // "admin" precedes "member"
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!repo?.workspace?.memberships) {
+      return undefined;
+    }
+
+    const membershipsWithGitHub = repo.workspace.memberships.filter(
+      (m) => Boolean(m.user?.githubConnection?.encryptedAccessToken)
+    );
+
+    if (membershipsWithGitHub.length === 0) {
+      return undefined;
+    }
+
+    const preferredMembership =
+      membershipsWithGitHub.find((m) => m.role === "admin") ||
+      membershipsWithGitHub[0];
+
+    const encryptedToken = preferredMembership.user.githubConnection!.encryptedAccessToken;
+    return decryptToken(encryptedToken);
+  } catch (err) {
+    console.warn(`[SYNC] Could not resolve/decrypt GitHub token for repo ${repoId}:`, (err as Error).message);
+    return undefined;
+  }
+};
+
 const syncSingleRepoWithRetry = async (repoId: number, maxAttempts = 2) => {
+  const accessToken = await resolveAccessTokenForRepo(repoId);
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const commitCount = await syncRepoCommitsById(repoId);
-      const prCount = await syncRepoPRsById(repoId);
+      const commitCount = await syncRepoCommitsById(repoId, accessToken);
+      const prCount = await syncRepoPRsById(repoId, accessToken);
       return { commitCount, prCount };
     } catch (error) {
       lastError = error;

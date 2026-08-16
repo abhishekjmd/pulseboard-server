@@ -6,6 +6,7 @@ import workspaceRoutes from "./routes/workspace.routes";
 import repoRoutes from "./routes/repo.routes";
 import metricsRoutes from "./routes/metrics.routes";
 import publicRoutes from "./routes/public.routes";
+import githubRoutes from "./routes/github.routes";
 import { runRepoSyncBatch, startRepoSyncJob } from "./jobs/repo-sync.job";
 // rest of your code...
 const app = express();
@@ -21,6 +22,8 @@ app.use((req, res, next) => {
   if (origin && allowedOrigins.includes(origin)) {
     res.header("Access-Control-Allow-Origin", origin);
     res.header("Vary", "Origin");
+    // Allow browser requests to include credentials when the origin is allowed
+    res.header("Access-Control-Allow-Credentials", "true");
   }
 
   res.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
@@ -40,6 +43,7 @@ app.use("/api/workspaces", workspaceRoutes);
 app.use("/api/repos", repoRoutes);
 app.use("/api/metrics", metricsRoutes);
 app.use("/api/public", publicRoutes);
+app.use("/api/github", githubRoutes);
 
 app.use(errorHandler);
 

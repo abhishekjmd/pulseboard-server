@@ -92,3 +92,14 @@ The server is built with a focus on **data integrity**, **performance**, and **a
 
 ---
 *Pulseboard Server — Engineering metrics you can actually act on.*
+### GitHub OAuth Environment Variables
+
+Phase 1 GitHub OAuth requires these backend environment variable names:
+
+- `GITHUB_CLIENT_ID`
+- `GITHUB_CLIENT_SECRET`
+- `GITHUB_OAUTH_REDIRECT_URI`
+- `GITHUB_TOKEN_ENCRYPTION_KEY`
+- `FRONTEND_URL`
+
+`GITHUB_TOKEN_ENCRYPTION_KEY` must be either 32 raw bytes or a base64-encoded 32-byte key. Do not commit real values.

@@ -1,6 +1,6 @@
 import { prisma } from "../prisma";
 
-export const syncRepoPRsById = async (repoId: number) => {
+export const syncRepoPRsById = async (repoId: number, accessToken?: string) => {
   const repo = await prisma.repository.findUnique({
     where: { id: repoId },
   });
@@ -9,14 +9,18 @@ export const syncRepoPRsById = async (repoId: number) => {
     throw new Error("Repository not found");
   }
 
-  const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+  const envToken = process.env.GITHUB_TOKEN;
   const headers: Record<string, string> = {
     Accept: "application/vnd.github.v3+json",
     "User-Agent": "pulseboard-app",
   };
 
-  if (GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
+  // Prefer an explicit accessToken (from the user's GitHubConnection) when provided.
+  // Fall back to server-level GITHUB_TOKEN only if no accessToken is supplied.
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  } else if (envToken) {
+    headers.Authorization = `Bearer ${envToken}`;
   }
 
   let page = 1;

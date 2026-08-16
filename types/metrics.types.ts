@@ -9,6 +9,9 @@ export type TimeWindowDays = (typeof VALID_WINDOW_DAYS)[number];
 export interface MetricsScope {
   repositoryId?: number;
   workspaceId?: number;
-  windowDays: TimeWindowDays;
+  // For standard windows this will be one of TimeWindowDays, but
+  // when using 'overall' the span may exceed those values, so
+  // allow any positive integer here.
+  windowDays: number;
   cutoffDate: Date; // Derived: now - windowDays (exact, not midnight-rounded)
 }
